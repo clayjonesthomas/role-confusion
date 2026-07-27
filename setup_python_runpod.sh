@@ -47,9 +47,13 @@ export UV_HTTP_TIMEOUT=120
 # that file over SSH, chmod 600).
 install_hf_token() {
   if [ -f /workspace/secrets/hf_token ]; then
-    mkdir -p "$HOME/.cache/huggingface"
+    # The RunPod image sets HF_HOME=/workspace/.cache/huggingface/ in the container env, and
+    # Jupyter kernels look for the token there. SSH sessions don't get the container env and
+    # fall back to ~/.cache/huggingface/token, so install to both.
+    mkdir -p /workspace/.cache/huggingface "$HOME/.cache/huggingface"
+    cp /workspace/secrets/hf_token /workspace/.cache/huggingface/token
     install -m 600 /workspace/secrets/hf_token "$HOME/.cache/huggingface/token"
-    echo "HF token installed from /workspace/secrets/hf_token."
+    echo "HF token installed (HF_HOME on volume + ~/.cache for ssh sessions)."
   fi
 }
 
