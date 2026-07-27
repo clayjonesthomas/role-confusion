@@ -30,12 +30,26 @@ export UV_PYTHON_INSTALL_DIR="/workspace/.uv-python"
 export UV_HTTP_TIMEOUT=120
 
 
+# Install the Hugging Face token if one is stored on the volume. huggingface_hub reads
+# ~/.cache/huggingface/token automatically; that path is wiped on every pod boot, so the
+# durable copy lives at /workspace/secrets/hf_token (create it once: paste the token into
+# that file over SSH, chmod 600).
+install_hf_token() {
+  if [ -f /workspace/secrets/hf_token ]; then
+    mkdir -p "$HOME/.cache/huggingface"
+    install -m 600 /workspace/secrets/hf_token "$HOME/.cache/huggingface/token"
+    echo "HF token installed from /workspace/secrets/hf_token."
+  fi
+}
+
+
 # ---------- 0. Fast mode: --fast redoes only what a pod boot wipes ----------
 if [ "${1:-}" = "--fast" ]; then
   if [ ! -x "$VENV_DIR/bin/python" ]; then
     echo "ERROR: no venv at $VENV_DIR - run once without --fast first." >&2
     exit 1
   fi
+  install_hf_token
   "$VENV_DIR/bin/python" -m ipykernel install --user --name "$KERNEL_NAME" --display-name "Role analysis (uv)"
   SITE_DIR="$("$VENV_DIR/bin/python" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
   printf "%s\n" "$PROJECT_DIR" > "$SITE_DIR/add_path_analysis.pth"
@@ -132,5 +146,6 @@ SITE_DIR="$("$VENV_DIR/bin/python" -c 'import sysconfig; print(sysconfig.get_pat
 printf "%s\n" "$PROJECT_DIR" > "$SITE_DIR/add_path_analysis.pth"
 
 # Final
+install_hf_token
 echo "Done. Kernel: $KERNEL_NAME  |  Python: $("$VENV_DIR/bin/python" -V)"
 echo "Open demo/role-probe-demo_runpod.ipynb in JupyterLab and select the 'Role analysis (uv)' kernel."
