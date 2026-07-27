@@ -13,13 +13,13 @@ set -euo pipefail
 # KERNEL_NAME to the desired Jupyter kernel name.
 
 # Set constants
-PROJECT_DIR="/workspace/deliberative-alignment-jailbreaks"
+PROJECT_DIR="/Users/clayjones/code/prompt-injection-as-role-confusion"
 VENV_DIR="$PROJECT_DIR/.venv"
 KERNEL_NAME="role-analysis-uv"
 
 # Persist across restarts
-export UV_CACHE_DIR="/workspace/.uv-cache"
-export UV_PYTHON_INSTALL_DIR="/workspace/.uv-python"
+export UV_CACHE_DIR="/Users/clayjones/code/prompt-injection-as-role-confusion/.uv-cache"
+export UV_PYTHON_INSTALL_DIR="/Users/clayjones/code/prompt-injection-as-role-confusion/.uv-python"
 export UV_HTTP_TIMEOUT=120
 
 
