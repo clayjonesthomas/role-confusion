@@ -98,7 +98,7 @@ uv pip install --python "$VENV_DIR/bin/python" \
   tiktoken==0.12.0 blobfile==3.1.0 \
   compressed-tensors==0.13.0 \
   plotly pandas "scikit-learn==1.7.*" python-dotenv pyyaml tqdm termcolor \
-  datasets
+  datasets zstandard
 
 # `kernels` must land inside the window the installed transformers accepts. transformers checks
 # KERNELS_MIN_VERSION <= v < KERNELS_MAX_VERSION but only ever complains about the floor, so an
