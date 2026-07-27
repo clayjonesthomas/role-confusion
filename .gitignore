@@ -5,6 +5,13 @@
 .venv
 *.pyc
 .pycache
+.uv-cache/
+.uv-python/
+
+# Editor / local
+.vscode/
+pyrightconfig.json
+dev.log
 
 # Data
 *.csv
