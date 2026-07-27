@@ -43,12 +43,15 @@ install_hf_token() {
 }
 
 # Point SSH at the repo's GitHub deploy key (generated on the pod, stored on the volume,
-# registered as a deploy key on the GitHub repo). ~/.ssh is wiped on every pod boot.
+# registered as a deploy key on the GitHub repo). ~/.ssh is wiped on every pod boot, and the
+# network volume forces mode 666 on everything (chmod is ignored), which ssh refuses for
+# private keys - so copy the key to local disk with real 600 perms each boot.
 install_github_key() {
   if [ -f /workspace/secrets/github_deploy_key ]; then
     mkdir -p "$HOME/.ssh" && chmod 700 "$HOME/.ssh"
+    install -m 600 /workspace/secrets/github_deploy_key "$HOME/.ssh/github_deploy_key"
     if ! grep -q github_deploy_key "$HOME/.ssh/config" 2>/dev/null; then
-      printf "Host github.com\n  IdentityFile /workspace/secrets/github_deploy_key\n  IdentitiesOnly yes\n  StrictHostKeyChecking accept-new\n" >> "$HOME/.ssh/config"
+      printf "Host github.com\n  IdentityFile ~/.ssh/github_deploy_key\n  IdentitiesOnly yes\n  StrictHostKeyChecking accept-new\n" >> "$HOME/.ssh/config"
       chmod 600 "$HOME/.ssh/config"
     fi
     echo "GitHub deploy key configured."
