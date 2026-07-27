@@ -20,13 +20,24 @@ set -euo pipefail
 # the first time on a volume, or after changing any package pins.
 
 # Set constants
+#
+# The venv (and its Python) live on the pod's LOCAL container disk, not the network volume:
+# imports do tens of thousands of metadata operations, which cost a network round-trip each
+# on the volume's FUSE mount (fresh-kernel `import torch, cuml` took minutes). Local disk is
+# wiped on every boot, so after a full install we snapshot /opt to a single tar on the volume;
+# --fast restores it with one sequential read (~a minute) instead of a package reinstall.
 PROJECT_DIR="/workspace/prompt-injection-as-role-confusion"
-VENV_DIR="$PROJECT_DIR/.venv"
+VENV_DIR="/opt/role-venv"                      # local: fast imports, wiped each boot
+VENV_SNAPSHOT="/workspace/venv-snapshot.tar"   # durable single-file image of the /opt trees
+CACHE_SNAPSHOT="/workspace/uv-cache-snapshot.tar"  # durable image of the uv cache (full rebuilds only)
 KERNEL_NAME="role-analysis-uv"
 
-# Persist across restarts
-export UV_CACHE_DIR="/workspace/.uv-cache"
-export UV_PYTHON_INSTALL_DIR="/workspace/.uv-python"
+# The uv cache is local and ephemeral, NOT on the volume: its format is extracted wheel trees
+# (very many small files), and reading those over the volume's FUSE mount is slower than just
+# re-downloading wheels from PyPI on the rare full rebuild. Local cache also means hardlink
+# installs into the local venv.
+export UV_CACHE_DIR="/opt/uv-cache"
+export UV_PYTHON_INSTALL_DIR="/opt/uv-python"  # local: goes into the snapshot with the venv
 export UV_HTTP_TIMEOUT=120
 
 
@@ -62,8 +73,13 @@ install_github_key() {
 # ---------- 0. Fast mode: --fast redoes only what a pod boot wipes ----------
 if [ "${1:-}" = "--fast" ]; then
   if [ ! -x "$VENV_DIR/bin/python" ]; then
-    echo "ERROR: no venv at $VENV_DIR - run once without --fast first." >&2
-    exit 1
+    if [ -f "$VENV_SNAPSHOT" ]; then
+      echo "Restoring local venv from snapshot (one sequential read off the volume)..."
+      tar -xf "$VENV_SNAPSHOT" -C /
+    else
+      echo "ERROR: no venv at $VENV_DIR and no snapshot at $VENV_SNAPSHOT - run once without --fast first." >&2
+      exit 1
+    fi
   fi
   install_hf_token
   install_github_key
@@ -72,6 +88,15 @@ if [ "${1:-}" = "--fast" ]; then
   printf "%s\n" "$PROJECT_DIR" > "$SITE_DIR/add_path_analysis.pth"
   echo "Fast setup done. Kernel: $KERNEL_NAME  |  Python: $("$VENV_DIR/bin/python" -V)"
   exit 0
+fi
+
+
+# ---------- 0.5. Restore the uv cache snapshot (full runs only) ----------
+# Insurance against re-download time and against upstream indexes deleting pinned versions
+# (RAPIDS 25.9 disappeared from pypi.nvidia.com). Restored as one sequential read.
+if [ ! -d "$UV_CACHE_DIR" ] && [ -f "$CACHE_SNAPSHOT" ]; then
+  echo "Restoring uv cache from snapshot..."
+  tar -xf "$CACHE_SNAPSHOT" -C /
 fi
 
 
@@ -161,6 +186,16 @@ uv pip install --python "$VENV_DIR/bin/python" jupyterlab jupyter_server ipykern
 # ---------- 5. Add import paths ----------
 SITE_DIR="$("$VENV_DIR/bin/python" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
 printf "%s\n" "$PROJECT_DIR" > "$SITE_DIR/add_path_analysis.pth"
+
+
+# ---------- 6. Snapshot the local venv and uv cache to the volume ----------
+echo "Snapshotting local venv to $VENV_SNAPSHOT (used by --fast on future boots)..."
+tar -cf "$VENV_SNAPSHOT.tmp" -C / opt/role-venv opt/uv-python
+mv -f "$VENV_SNAPSHOT.tmp" "$VENV_SNAPSHOT"
+
+echo "Snapshotting uv cache to $CACHE_SNAPSHOT (used by future full rebuilds)..."
+tar -cf "$CACHE_SNAPSHOT.tmp" -C / opt/uv-cache
+mv -f "$CACHE_SNAPSHOT.tmp" "$CACHE_SNAPSHOT"
 
 # Final
 install_hf_token
