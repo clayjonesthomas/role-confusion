@@ -14,8 +14,10 @@ set -euo pipefail
 #  - No flash-attn wheel: the runpod notebook uses eager attention (FA3 is Hopper-only).
 #
 # Re-run this on every fresh pod: the venv on /workspace persists, but the Jupyter kernel
-# registration lives in the container's /root and does not. The script is idempotent and
-# near-instant when everything is already installed.
+# registration lives in the container's /root and does not. Use `--fast` for those re-runs:
+# it skips all package installs/audits (even no-op audits cost minutes on the network
+# filesystem) and only redoes the per-boot container state. Run the full script (no flag)
+# the first time on a volume, or after changing any package pins.
 
 # Set constants
 PROJECT_DIR="/workspace/prompt-injection-as-role-confusion"
@@ -26,6 +28,20 @@ KERNEL_NAME="role-analysis-uv"
 export UV_CACHE_DIR="/workspace/.uv-cache"
 export UV_PYTHON_INSTALL_DIR="/workspace/.uv-python"
 export UV_HTTP_TIMEOUT=120
+
+
+# ---------- 0. Fast mode: --fast redoes only what a pod boot wipes ----------
+if [ "${1:-}" = "--fast" ]; then
+  if [ ! -x "$VENV_DIR/bin/python" ]; then
+    echo "ERROR: no venv at $VENV_DIR - run once without --fast first." >&2
+    exit 1
+  fi
+  "$VENV_DIR/bin/python" -m ipykernel install --user --name "$KERNEL_NAME" --display-name "Role analysis (uv)"
+  SITE_DIR="$("$VENV_DIR/bin/python" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
+  printf "%s\n" "$PROJECT_DIR" > "$SITE_DIR/add_path_analysis.pth"
+  echo "Fast setup done. Kernel: $KERNEL_NAME  |  Python: $("$VENV_DIR/bin/python" -V)"
+  exit 0
+fi
 
 
 # ---------- 1. Install UV (idempotent) ----------
