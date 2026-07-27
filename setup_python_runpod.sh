@@ -42,6 +42,19 @@ install_hf_token() {
   fi
 }
 
+# Point SSH at the repo's GitHub deploy key (generated on the pod, stored on the volume,
+# registered as a deploy key on the GitHub repo). ~/.ssh is wiped on every pod boot.
+install_github_key() {
+  if [ -f /workspace/secrets/github_deploy_key ]; then
+    mkdir -p "$HOME/.ssh" && chmod 700 "$HOME/.ssh"
+    if ! grep -q github_deploy_key "$HOME/.ssh/config" 2>/dev/null; then
+      printf "Host github.com\n  IdentityFile /workspace/secrets/github_deploy_key\n  IdentitiesOnly yes\n  StrictHostKeyChecking accept-new\n" >> "$HOME/.ssh/config"
+      chmod 600 "$HOME/.ssh/config"
+    fi
+    echo "GitHub deploy key configured."
+  fi
+}
+
 
 # ---------- 0. Fast mode: --fast redoes only what a pod boot wipes ----------
 if [ "${1:-}" = "--fast" ]; then
@@ -50,6 +63,7 @@ if [ "${1:-}" = "--fast" ]; then
     exit 1
   fi
   install_hf_token
+  install_github_key
   "$VENV_DIR/bin/python" -m ipykernel install --user --name "$KERNEL_NAME" --display-name "Role analysis (uv)"
   SITE_DIR="$("$VENV_DIR/bin/python" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
   printf "%s\n" "$PROJECT_DIR" > "$SITE_DIR/add_path_analysis.pth"
@@ -147,5 +161,6 @@ printf "%s\n" "$PROJECT_DIR" > "$SITE_DIR/add_path_analysis.pth"
 
 # Final
 install_hf_token
+install_github_key
 echo "Done. Kernel: $KERNEL_NAME  |  Python: $("$VENV_DIR/bin/python" -V)"
 echo "Open demo/role-probe-demo_runpod.ipynb in JupyterLab and select the 'Role analysis (uv)' kernel."

@@ -5,6 +5,7 @@
 .venv
 *.pyc
 .pycache
+.ipynb_checkpoints/
 .uv-cache/
 .uv-python/
 
