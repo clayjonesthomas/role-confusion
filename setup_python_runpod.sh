@@ -192,6 +192,12 @@ SITE_DIR="$("$VENV_DIR/bin/python" -c 'import sysconfig; print(sysconfig.get_pat
 printf "%s\n" "$PROJECT_DIR" > "$SITE_DIR/add_path_analysis.pth"
 
 
+# Install tokens/keys BEFORE the slow snapshot step, so a snapshot failure (e.g. volume
+# quota) doesn't leave a pod without credentials.
+install_hf_token
+install_github_key
+
+
 # ---------- 6. Snapshot the local venv and uv cache to the volume ----------
 # uv only installs its own python into /opt/uv-python when the image lacks a matching one;
 # with the pinned image it uses the local system python, so include the dir only if present.
