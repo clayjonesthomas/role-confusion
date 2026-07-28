@@ -27,6 +27,7 @@ set -euo pipefail
 # wiped on every boot, so after a full install we snapshot /opt to a single tar on the volume;
 # --fast restores it with one sequential read (~a minute) instead of a package reinstall.
 PROJECT_DIR="/workspace/prompt-injection-as-role-confusion"
+JUPYTERLAB_VERSION="4.6.2"
 VENV_DIR="/opt/role-venv"                      # local: fast imports, wiped each boot
 VENV_SNAPSHOT="/workspace/venv-snapshot.tar"   # durable single-file image of the /opt trees
 CACHE_SNAPSHOT="/workspace/uv-cache-snapshot.tar"  # durable image of the uv cache (full rebuilds only)
@@ -74,6 +75,39 @@ install_github_key() {
 }
 
 
+# The browser-facing JupyterLab is the IMAGE's system install (the template starts it at
+# boot), not the venv's, and it lives on the wiped-each-boot container disk - so it must be
+# re-upgraded per boot. If the running server is on the old version, restart it with its
+# original argv and container env preserved. Safe at boot time (no kernels exist yet); a
+# mid-session run kills running kernels, so only call this right after boot.
+upgrade_jupyterlab() {
+  local current
+  current="$(/usr/local/bin/python -m pip show jupyterlab 2>/dev/null | awk '/^Version:/{print $2}')"
+  if [ "$current" != "$JUPYTERLAB_VERSION" ]; then
+    echo "Upgrading system JupyterLab $current -> $JUPYTERLAB_VERSION..."
+    /usr/local/bin/python -m pip install -q "jupyterlab==$JUPYTERLAB_VERSION"
+    if pgrep -f "jupyter-lab --allow-root" >/dev/null; then
+      python3 - <<'PYEOF'
+import os, signal, subprocess, time
+pid = int(subprocess.check_output(["pgrep", "-f", "jupyter-lab --allow-root"]).split()[0])
+env = dict(l.split("=", 1) for l in open(f"/proc/{pid}/environ").read().split("\x00") if "=" in l)
+args = [a for a in open(f"/proc/{pid}/cmdline").read().split("\x00") if a]
+os.kill(pid, signal.SIGTERM)
+for _ in range(30):
+    time.sleep(0.5)
+    try: os.kill(pid, 0)
+    except ProcessLookupError: break
+subprocess.Popen(args, env=env, stdout=open("/jupyter.log", "a"),
+                 stderr=subprocess.STDOUT, start_new_session=True, cwd="/workspace")
+print("JupyterLab server restarted on the new version.")
+PYEOF
+    fi
+  else
+    echo "System JupyterLab already $JUPYTERLAB_VERSION."
+  fi
+}
+
+
 # ---------- 0. Fast mode: --fast redoes only what a pod boot wipes ----------
 if [ "${1:-}" = "--fast" ]; then
   if [ ! -x "$VENV_DIR/bin/python" ]; then
@@ -87,6 +121,7 @@ if [ "${1:-}" = "--fast" ]; then
   fi
   install_hf_token
   install_github_key
+  upgrade_jupyterlab
   "$VENV_DIR/bin/python" -m ipykernel install --user --name "$KERNEL_NAME" --display-name "Role analysis (uv)"
   SITE_DIR="$("$VENV_DIR/bin/python" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
   printf "%s\n" "$PROJECT_DIR" > "$SITE_DIR/add_path_analysis.pth"
@@ -181,7 +216,9 @@ uv pip install --python "$VENV_DIR/bin/python" --extra-index-url https://pypi.nv
 
 # ---------- 4. Setup Jupyter ----------
 # Jupyter (server + kernel + widgets + nbformat)
-uv pip install --python "$VENV_DIR/bin/python" jupyterlab jupyter_server ipykernel ipywidgets nbformat notebook
+uv pip install --python "$VENV_DIR/bin/python" "jupyterlab==$JUPYTERLAB_VERSION" jupyter_server ipykernel ipywidgets nbformat notebook
+
+upgrade_jupyterlab
 
 # Jupyter kernel (visible to any server, including the JupyterLab the RunPod template starts)
 "$VENV_DIR/bin/python" -m ipykernel install --user --name "$KERNEL_NAME" --display-name "Role analysis (uv)"
