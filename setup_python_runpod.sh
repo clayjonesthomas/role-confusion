@@ -195,13 +195,19 @@ printf "%s\n" "$PROJECT_DIR" > "$SITE_DIR/add_path_analysis.pth"
 # ---------- 6. Snapshot the local venv and uv cache to the volume ----------
 # uv only installs its own python into /opt/uv-python when the image lacks a matching one;
 # with the pinned image it uses the local system python, so include the dir only if present.
+# The old snapshot is deleted BEFORE writing the new one: the 50 GB volume cannot hold two
+# copies of a snapshot at once (rewrites hit the quota). The .tmp+mv still guarantees the
+# named snapshot is never a partial file; the risk window where neither exists is acceptable
+# because both are regenerable from the live /opt trees.
 SNAP_PATHS="opt/role-venv"
 [ -d /opt/uv-python ] && SNAP_PATHS="$SNAP_PATHS opt/uv-python"
 echo "Snapshotting local venv to $VENV_SNAPSHOT (used by --fast on future boots)..."
+rm -f "$VENV_SNAPSHOT.tmp" "$VENV_SNAPSHOT"
 tar -cf "$VENV_SNAPSHOT.tmp" -C / $SNAP_PATHS
 mv -f "$VENV_SNAPSHOT.tmp" "$VENV_SNAPSHOT"
 
 echo "Snapshotting uv cache to $CACHE_SNAPSHOT (used by future full rebuilds)..."
+rm -f "$CACHE_SNAPSHOT.tmp" "$CACHE_SNAPSHOT"
 tar -cf "$CACHE_SNAPSHOT.tmp" -C / opt/uv-cache
 mv -f "$CACHE_SNAPSHOT.tmp" "$CACHE_SNAPSHOT"
 
