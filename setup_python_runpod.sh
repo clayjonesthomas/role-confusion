@@ -85,7 +85,9 @@ upgrade_jupyterlab() {
   current="$(/usr/local/bin/python -m pip show jupyterlab 2>/dev/null | awk '/^Version:/{print $2}')"
   if [ "$current" != "$JUPYTERLAB_VERSION" ]; then
     echo "Upgrading system JupyterLab $current -> $JUPYTERLAB_VERSION..."
-    /usr/local/bin/python -m pip install -q "jupyterlab==$JUPYTERLAB_VERSION"
+    # --break-system-packages: the image's python is PEP-668 "externally managed", but this is
+    # a disposable container root env - the same way the image itself installed jupyter.
+    /usr/local/bin/python -m pip install -q --break-system-packages "jupyterlab==$JUPYTERLAB_VERSION"
     if pgrep -f "jupyter-lab --allow-root" >/dev/null; then
       python3 - <<'PYEOF'
 import os, signal, subprocess, time
