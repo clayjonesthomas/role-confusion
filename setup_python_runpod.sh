@@ -75,6 +75,18 @@ install_github_key() {
 }
 
 
+# HF_HOME is set in the CONTAINER env (so Jupyter kernels see it) but SSH sessions do not
+# inherit it - a script run over SSH would fall back to ~/.cache/huggingface on the local
+# container disk, which is wiped every boot. Export it for interactive/SSH shells too so
+# every entry point shares one cache on the volume.
+install_hf_env() {
+  local rc="$HOME/.bashrc"
+  if ! grep -q "HF_HOME=/workspace/.cache/huggingface" "$rc" 2>/dev/null; then
+    printf 'export HF_HOME=/workspace/.cache/huggingface\n' >> "$rc"
+    echo "HF_HOME exported for SSH shells (~/.bashrc)."
+  fi
+}
+
 # The browser-facing JupyterLab is the IMAGE's system install (the template starts it at
 # boot), not the venv's, and it lives on the wiped-each-boot container disk - so it must be
 # re-upgraded per boot. If the running server is on the old version, restart it with its
@@ -122,6 +134,7 @@ if [ "${1:-}" = "--fast" ]; then
     fi
   fi
   install_hf_token
+  install_hf_env
   install_github_key
   upgrade_jupyterlab
   "$VENV_DIR/bin/python" -m ipykernel install --user --name "$KERNEL_NAME" --display-name "Role analysis (uv)"
@@ -234,6 +247,7 @@ printf "%s\n" "$PROJECT_DIR" > "$SITE_DIR/add_path_analysis.pth"
 # Install tokens/keys BEFORE the slow snapshot step, so a snapshot failure (e.g. volume
 # quota) doesn't leave a pod without credentials.
 install_hf_token
+install_hf_env
 install_github_key
 
 
@@ -258,6 +272,7 @@ mv -f "$CACHE_SNAPSHOT.tmp" "$CACHE_SNAPSHOT"
 
 # Final
 install_hf_token
+install_hf_env
 install_github_key
 echo "Done. Kernel: $KERNEL_NAME  |  Python: $("$VENV_DIR/bin/python" -V)"
 echo "Open demo/role-probe-demo_runpod.ipynb in JupyterLab and select the 'Role analysis (uv)' kernel."
