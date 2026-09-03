@@ -63,7 +63,7 @@ def load_model_and_tokenizer(model_prefix, device):
     """
     model_id, model_architecture, model_attn, model_use_hf, model_n_layers = get_supported_model_metadata(model_prefix)
 
-    cache_dir = '/workspace/hf'
+    cache_dir = '/workspace/code/prompt-injection-as-role-confusion/hf'
     tokenizer = AutoTokenizer.from_pretrained(model_id, cache_dir = cache_dir, add_eos_token = False, add_bos_token = False, padding_side = 'left', trust_remote_code = True)
     load_params = {'cache_dir': cache_dir, 'dtype': 'auto', 'trust_remote_code': not model_use_hf, 'device_map': None, 'attn_implementation': model_attn}    
     if model_architecture == 'glm46v':

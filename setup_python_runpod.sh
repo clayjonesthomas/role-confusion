@@ -26,11 +26,11 @@ set -euo pipefail
 # on the volume's FUSE mount (fresh-kernel `import torch, cuml` took minutes). Local disk is
 # wiped on every boot, so after a full install we snapshot /opt to a single tar on the volume;
 # --fast restores it with one sequential read (~a minute) instead of a package reinstall.
-PROJECT_DIR="/workspace/prompt-injection-as-role-confusion"
+PROJECT_DIR="/workspace/code/prompt-injection-as-role-confusion/repo"
 JUPYTERLAB_VERSION="4.6.2"
 VENV_DIR="/opt/role-venv"                      # local: fast imports, wiped each boot
-VENV_SNAPSHOT="/workspace/venv-snapshot.tar"   # durable single-file image of the /opt trees
-CACHE_SNAPSHOT="/workspace/uv-cache-snapshot.tar"  # durable image of the uv cache (full rebuilds only)
+VENV_SNAPSHOT="/workspace/code/prompt-injection-as-role-confusion/venv-snapshot.tar"   # durable single-file image of the /opt trees
+CACHE_SNAPSHOT="/workspace/code/prompt-injection-as-role-confusion/uv-cache-snapshot.tar"  # durable image of the uv cache (full rebuilds only)
 KERNEL_NAME="role-analysis-uv"
 
 # The uv cache is local and ephemeral, NOT on the volume: its format is extracted wheel trees
