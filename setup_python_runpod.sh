@@ -58,22 +58,6 @@ install_hf_token() {
   fi
 }
 
-# Point SSH at the repo's GitHub deploy key (generated on the pod, stored on the volume,
-# registered as a deploy key on the GitHub repo). ~/.ssh is wiped on every pod boot, and the
-# network volume forces mode 666 on everything (chmod is ignored), which ssh refuses for
-# private keys - so copy the key to local disk with real 600 perms each boot.
-install_github_key() {
-  if [ -f /workspace/secrets/github_deploy_key ]; then
-    mkdir -p "$HOME/.ssh" && chmod 700 "$HOME/.ssh"
-    install -m 600 /workspace/secrets/github_deploy_key "$HOME/.ssh/github_deploy_key"
-    if ! grep -q github_deploy_key "$HOME/.ssh/config" 2>/dev/null; then
-      printf "Host github.com\n  IdentityFile ~/.ssh/github_deploy_key\n  IdentitiesOnly yes\n  StrictHostKeyChecking accept-new\n" >> "$HOME/.ssh/config"
-      chmod 600 "$HOME/.ssh/config"
-    fi
-    echo "GitHub deploy key configured."
-  fi
-}
-
 
 # HF_HOME is set in the CONTAINER env (so Jupyter kernels see it) but SSH sessions do not
 # inherit it - a script run over SSH would fall back to ~/.cache/huggingface on the local
@@ -85,6 +69,65 @@ install_hf_env() {
     printf 'export HF_HOME=/workspace/.cache/huggingface\n' >> "$rc"
     echo "HF_HOME exported for SSH shells (~/.bashrc)."
   fi
+}
+
+# Env for every interpreter in this venv, Jupyter kernels included, via a .pth hook
+# (site.py runs every .pth in site-packages at startup) - kernels never read ~/.bashrc.
+# Loads this project's /workspace/code/prompt-injection-as-role-confusion/.env, then the
+# volume's shared keys. The venv is on wiped local disk, so this is redone every boot.
+install_env_hook() {
+  local site_dir
+  site_dir="$("$VENV_DIR/bin/python" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
+  cat > "$site_dir/role_env_hook.py" <<'HOOK'
+"""Environment for every interpreter in this venv, Jupyter kernels included.
+
+Imported by zzz_role_env.pth at interpreter startup (site.py runs every .pth in
+site-packages), which is the only hook that reliably reaches a Jupyter kernel:
+kernel.json's env is read from a kernelspec the server caches at ITS startup, and
+~/.bashrc is not read by a non-interactive kernel process at all.
+
+Layering: a value set explicitly wins, then this project's own
+/workspace/code/prompt-injection-as-role-confusion/.env, then the volume's shared key store
+/workspace/secrets/env. ~/.bashrc exports the shared file into every shell, so a
+shared value may already be set when this runs; the project file still replaces it,
+since a value equal to its shared one counts as unset. Blank values are skipped.
+Lines are KEY=value; no inline comments.
+"""
+
+import os
+
+
+def read(path):
+    values = {}
+    try:
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if line.startswith("export "):
+                    line = line[len("export "):]
+                key, sep, value = line.partition("=")
+                value = value.strip().strip("\"'")
+                if sep and value:
+                    values[key.strip()] = value
+    except OSError:
+        pass
+    return values
+
+
+project = read("/workspace/code/prompt-injection-as-role-confusion/.env")
+shared = read("/workspace/secrets/env")
+for key, value in project.items():
+    if os.environ.get(key) in (None, shared.get(key)):
+        os.environ[key] = value
+for key, value in shared.items():
+    os.environ.setdefault(key, value)
+
+os.environ.setdefault("HF_HOME", "/workspace/.cache/huggingface")  # pod-wide model cache
+HOOK
+  printf '%s\n' 'import role_env_hook' > "$site_dir/zzz_role_env.pth"
+  echo "venv env hook installed (project .env, /workspace/secrets/env)."
 }
 
 # The browser-facing JupyterLab is the IMAGE's system install (the template starts it at
@@ -135,11 +178,11 @@ if [ "${1:-}" = "--fast" ]; then
   fi
   install_hf_token
   install_hf_env
-  install_github_key
   upgrade_jupyterlab
   "$VENV_DIR/bin/python" -m ipykernel install --user --name "$KERNEL_NAME" --display-name "Role analysis (uv)"
   SITE_DIR="$("$VENV_DIR/bin/python" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
   printf "%s\n" "$PROJECT_DIR" > "$SITE_DIR/add_path_analysis.pth"
+  install_env_hook
   echo "Fast setup done. Kernel: $KERNEL_NAME  |  Python: $("$VENV_DIR/bin/python" -V)"
   exit 0
 fi
@@ -187,6 +230,15 @@ fi
 
 
 # ---------- 3. Install packages ----------
+# runpod/requirements.lock.txt is the exact package set of the last saved venv
+# (runpod/save.sh writes it), so a rebuild reproduces that venv, hand installs included.
+# Without one, resolve from the pins below.
+LOCK="$PROJECT_DIR/runpod/requirements.lock.txt"
+if [ -f "$LOCK" ]; then
+  echo "Installing the exact package set from runpod/requirements.lock.txt..."
+  uv pip sync --python "$VENV_DIR/bin/python" --index-strategy unsafe-best-match "$LOCK"
+else  # ---- no lockfile: install from the pins ----
+
 uv pip install --python "$VENV_DIR/bin/python" --index-url https://download.pytorch.org/whl/cu128 torch==2.9.1
 
 uv pip install --python "$VENV_DIR/bin/python" \
@@ -229,6 +281,8 @@ uv pip install --python "$VENV_DIR/bin/python" --extra-index-url https://pypi.nv
 # uv run --python "$VENV_DIR/bin/python" plotly_get_chrome -y
 # apt update && apt-get install -y libnss3 libatk-bridge2.0-0 libcups2 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 libxkbcommon0 libpango-1.0-0 libcairo2
 
+fi  # ---- end: no lockfile ----
+
 # ---------- 4. Setup Jupyter ----------
 # Jupyter (server + kernel + widgets + nbformat)
 uv pip install --python "$VENV_DIR/bin/python" "jupyterlab==$JUPYTERLAB_VERSION" jupyter_server ipykernel ipywidgets nbformat notebook
@@ -242,28 +296,24 @@ upgrade_jupyterlab
 # ---------- 5. Add import paths ----------
 SITE_DIR="$("$VENV_DIR/bin/python" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
 printf "%s\n" "$PROJECT_DIR" > "$SITE_DIR/add_path_analysis.pth"
+install_env_hook
 
 
 # Install tokens/keys BEFORE the slow snapshot step, so a snapshot failure (e.g. volume
 # quota) doesn't leave a pod without credentials.
 install_hf_token
 install_hf_env
-install_github_key
 
 
 # ---------- 6. Snapshot the local venv and uv cache to the volume ----------
-# uv only installs its own python into /opt/uv-python when the image lacks a matching one;
-# with the pinned image it uses the local system python, so include the dir only if present.
-# The old snapshot is deleted BEFORE writing the new one: the 50 GB volume cannot hold two
-# copies of a snapshot at once (rewrites hit the quota). The .tmp+mv still guarantees the
-# named snapshot is never a partial file; the risk window where neither exists is acceptable
-# because both are regenerable from the live /opt trees.
-SNAP_PATHS="opt/role-venv"
-[ -d /opt/uv-python ] && SNAP_PATHS="$SNAP_PATHS opt/uv-python"
-echo "Snapshotting local venv to $VENV_SNAPSHOT (used by --fast on future boots)..."
-rm -f "$VENV_SNAPSHOT.tmp" "$VENV_SNAPSHOT"
-tar -cf "$VENV_SNAPSHOT.tmp" -C / $SNAP_PATHS
-mv -f "$VENV_SNAPSHOT.tmp" "$VENV_SNAPSHOT"
+# The venv (plus /opt/uv-python, if uv installed its own Python there): runpod/save.sh
+# writes the lockfile and re-snapshots it when its package set changed.
+bash "$PROJECT_DIR/runpod/save.sh"
+
+# The uv cache: the old snapshot is deleted BEFORE writing the new one, since the volume
+# cannot hold two copies of it at once. The .tmp+mv still guarantees the named snapshot
+# is never a partial file; the window where neither exists is acceptable because the
+# cache is regenerable.
 
 echo "Snapshotting uv cache to $CACHE_SNAPSHOT (used by future full rebuilds)..."
 rm -f "$CACHE_SNAPSHOT.tmp" "$CACHE_SNAPSHOT"
@@ -273,6 +323,5 @@ mv -f "$CACHE_SNAPSHOT.tmp" "$CACHE_SNAPSHOT"
 # Final
 install_hf_token
 install_hf_env
-install_github_key
 echo "Done. Kernel: $KERNEL_NAME  |  Python: $("$VENV_DIR/bin/python" -V)"
 echo "Open demo/role-probe-demo_runpod.ipynb in JupyterLab and select the 'Role analysis (uv)' kernel."
