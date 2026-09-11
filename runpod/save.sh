@@ -7,7 +7,8 @@
 #
 # The lockfile is the venv's exact package set (`uv pip freeze`), so anything installed
 # by hand is recorded too; setup_python_runpod.sh installs it with `uv pip sync` on a
-# full rebuild. It is left modified for you to commit.
+# full rebuild. pod_save.sh commits and pushes it afterwards; run on its own, this
+# script leaves it for you to commit.
 set -uo pipefail
 
 REPO_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
@@ -52,7 +53,7 @@ print("\n".join(sorted(out)))'
 )"
 if [[ "$NEW_LOCK" != "$(cat "$LOCK" 2>/dev/null)" ]]; then
     printf '%s\n' "$NEW_LOCK" > "$LOCK"
-    log "updated $LOCK - commit it"
+    log "updated $LOCK"
 fi
 
 # ---------- snapshot, only if the package set changed ----------
